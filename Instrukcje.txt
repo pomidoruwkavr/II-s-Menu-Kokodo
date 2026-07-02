@@ -1,7 +1,0 @@
-spakuj plik w całość
-
-asar pack app_extracted app.asar
-
-wypakuj plik app.asar na folder
-
-asar extract app.asar app_extracted
