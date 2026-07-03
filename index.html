@@ -380,25 +380,20 @@
 	<script src="data.js" crossorigin="anonymous"></script>
 	<script src="ownerpanel.js" crossorigin="anonymous"></script>
 
-
 </head>
 <body>
-
     
 	<script>
 
     (function() {
-        //Initialization
+        
         var game = new gdjs.RuntimeGame(gdjs.projectData, {});
-        window.__gdGame = game; // udostepnienie gry dla Owner Panel
-
-        //Create a renderer
+        window.__gdGame = game; 
+        
         game.getRenderer().createStandardCanvas(document.body);
-
-        //Bind keyboards/mouse/touch events
+        
         game.getRenderer().bindStandardEvents(game.getInputManager(), window, document);
 
-        //Load all assets and start the game
         game.loadAllAssets(function() {
             game.startGameLoop();
         });
