@@ -97,7 +97,9 @@
     var npc = [];
     var items = [];
     var nodes = [];
+    var other = [];
     objs.forEach(function (o) {
+      if (o.name === PLAYER_OBJECT_NAME) return; // nie pokazuj gracza jako "do zespawnowania"
       var hasHealth = hasBehavior(o, "Health");
       var hasSticker = hasBehavior(o, "Sticker");
       if (hasSticker) {
@@ -106,9 +108,14 @@
         npc.push(o.name);
       } else if (hasHealth) {
         nodes.push(o.name);
+      } else if (o.type === "Sprite") {
+        // Sprite bez behaviora Health/Sticker - w praktyce wiele prawdziwych NPC
+        // (zwierzeta, postacie) w tym projekcie NIE MA behaviora Health, wiec
+        // wczesniej znikaly z panelu calkowicie. Pokazujemy je tutaj.
+        other.push(o.name);
       }
     });
-    return { npc: npc, items: items, nodes: nodes };
+    return { npc: npc, items: items, nodes: nodes, other: other };
   }
 
   function iconImgTag(objectName, sceneName, resourceMap) {
@@ -193,26 +200,35 @@
 
     var storedOriginalMaxHealth = null;
     var storedOriginalCurrentHealth = null;
+    var IMMORTAL_HEALTH_VALUE = 999999999; // duza skonczona liczba zamiast Infinity (bezpieczniejsze dla UI/serializacji)
 
     function forceInfiniteHealth(inst) {
       var hb = inst.getBehavior(PLAYER_HEALTH_BEHAVIOR);
       if (!hb) return;
-      tryCall(hb, ["setInvulnerable", "setIsInvulnerable", "setImmune", "setIsFlashing"], [true]);
-      tryCall(hb, ["setPropertyChanceToDodge", "setChanceToDodge"], [1]);
+      // PRAWDZIWE nazwy metod behaviora Health::Health (PascalCase) - patrz debug output.
+      tryCall(hb, ["SetChanceToDodge", "setPropertyChanceToDodge", "setChanceToDodge"], [1]);
       tryCall(
         hb,
-        ["setPropertyFlatDamageReduction", "setFlatDamageReduction"],
+        ["SetFlatDamageReduction", "setPropertyFlatDamageReduction", "setFlatDamageReduction"],
         [999999]
       );
       tryCall(
         hb,
-        ["setPropertyPercentDamageReduction", "setPercentDamageReduction"],
+        ["SetPercentDamageReduction", "setPropertyPercentDamageReduction", "setPercentDamageReduction"],
         [100]
       );
-      tryCall(hb, ["setPropertyMaxHealth", "setMaxHealth", "setMaxHP", "setMaximumHealth"], [Infinity]);
+      tryCall(
+        hb,
+        ["SetMaxHealth", "_setMaxHealth", "setPropertyMaxHealth", "setMaxHealth", "setMaxHP", "setMaximumHealth"],
+        [IMMORTAL_HEALTH_VALUE]
+      );
       tryCall(
         hb,
         [
+          "SetHealth",
+          "SetCurrentHealth",
+          "_setHealth",
+          "_setCurrentHealth",
           "setPropertyCurrentHealth",
           "setCurrentHealth",
           "setHealth",
@@ -220,8 +236,14 @@
           "setCurrentHP",
           "heal"
         ],
-        [Infinity]
+        [IMMORTAL_HEALTH_VALUE]
       );
+      // Dodatkowa warstwa ochrony przez tarcze (jesli behavior ja wspiera) - ignorowane cicho jesli nie istnieje.
+      tryCall(hb, ["SetShieldBlockExcessDamage"], [true]);
+      tryCall(hb, ["SetMaxShieldPoints", "SetMaxShield"], [IMMORTAL_HEALTH_VALUE]);
+      tryCall(hb, ["SetShieldPoints"], [IMMORTAL_HEALTH_VALUE]);
+      tryCall(hb, ["SetShieldDuration"], [999999]);
+      tryCall(hb, ["ActivateShield"], []);
     }
 
     function forceStrengthVar() {
@@ -250,8 +272,8 @@
         if (player) {
           var hb = player.getBehavior(PLAYER_HEALTH_BEHAVIOR);
           if (hb) {
-            storedOriginalMaxHealth = tryCall(hb, ["getMaxHealth", "getMaxHP"]);
-            storedOriginalCurrentHealth = tryCall(hb, ["getHealth", "getCurrentHealth"]);
+            storedOriginalMaxHealth = tryCall(hb, ["MaxHealth", "_getMaxHealth", "getMaxHealth", "getMaxHP"]);
+            storedOriginalCurrentHealth = tryCall(hb, ["Health", "_getCurrentHealth", "getHealth", "getCurrentHealth"]);
           }
         }
         immortalFrame();
@@ -259,12 +281,18 @@
         if (player) {
           var hb2 = player.getBehavior(PLAYER_HEALTH_BEHAVIOR);
           if (hb2) {
-            tryCall(hb2, ["setInvulnerable", "setIsInvulnerable", "setImmune"], [false]);
+            tryCall(hb2, ["SetChanceToDodge"], [0]);
+            tryCall(hb2, ["SetFlatDamageReduction"], [0]);
+            tryCall(hb2, ["SetPercentDamageReduction"], [0]);
             if (typeof storedOriginalMaxHealth === "number") {
-              tryCall(hb2, ["setMaxHealth", "setMaxHP"], [storedOriginalMaxHealth]);
+              tryCall(hb2, ["SetMaxHealth", "_setMaxHealth", "setMaxHealth", "setMaxHP"], [storedOriginalMaxHealth]);
             }
             if (typeof storedOriginalCurrentHealth === "number") {
-              tryCall(hb2, ["setCurrentHealth", "setHealth"], [storedOriginalCurrentHealth]);
+              tryCall(
+                hb2,
+                ["SetHealth", "SetCurrentHealth", "_setHealth", "_setCurrentHealth", "setCurrentHealth", "setHealth"],
+                [storedOriginalCurrentHealth]
+              );
             }
           }
         }
@@ -418,9 +446,14 @@
             console.warn("[OwnerPanel] " + callLabel + ": obiekt NIE MA behaviora '" + PLAYER_HEALTH_BEHAVIOR + "'.");
             return;
           }
+          // PRAWDZIWE nazwy metod behaviora Health::Health (potwierdzone debug-em):
+          // MaxHealth / Health (gettery), SetMaxHealth / SetHealth / SetCurrentHealth (settery),
+          // _getCurrentHealth / _setCurrentHealth (wewnetrzne, ale dostepne).
+          // Wczesniej uzywane camelCase (setMaxHealth, setHealth...) NIGDY nie istnialo -
+          // to byl caly powod, dla ktorego HP nigdy nie bylo naprawiane.
           var maxH = tryCallLog(
             hb,
-            ["getPropertyMaxHealth", "getMaxHealth", "getMaxHP", "getPropertyHealth", "getHealth"],
+            ["MaxHealth", "_getMaxHealth", "getPropertyMaxHealth", "getMaxHealth", "getMaxHP"],
             [],
             callLabel + " odczyt maxH"
           );
@@ -430,22 +463,23 @@
           }
           tryCallLog(
             hb,
-            ["setPropertyMaxHealth", "setMaxHealth", "setMaxHP", "setMaximumHealth"],
+            ["SetMaxHealth", "_setMaxHealth", "setPropertyMaxHealth", "setMaxHealth", "setMaxHP"],
             [maxH],
             callLabel + " setMaxHealth"
           );
           tryCallLog(
             hb,
-            ["setPropertyCurrentHealth", "setCurrentHealth", "setHealth", "setHP", "setCurrentHP"],
+            ["SetHealth", "SetCurrentHealth", "_setHealth", "_setCurrentHealth", "setPropertyCurrentHealth", "setCurrentHealth", "setHealth"],
             [maxH],
             callLabel + " setCurrentHealth"
           );
-          tryCallLog(hb, ["setPropertyDamageCooldown", "setDamageCooldown"], [0], callLabel + " setDamageCooldown");
+          tryCallLog(hb, ["SetCooldownDuration", "_setDamageCooldown", "setPropertyDamageCooldown", "setDamageCooldown"], [0], callLabel + " setDamageCooldown");
           forceRawHealthFields(hb, maxH);
           forceObjectHealthVariables(obj, maxH);
 
-          var checkAfter = tryCallLog(hb, ["getHealth", "getCurrentHealth", "getHP", "getCurrentHP"], [], callLabel + " odczyt PO fixHealth");
-          console.log("[OwnerPanel] " + callLabel + ": HP po naprawie = " + checkAfter);
+          var checkAfter = tryCallLog(hb, ["Health", "_getCurrentHealth", "getHealth", "getCurrentHealth"], [], callLabel + " odczyt PO fixHealth");
+          var isDead = tryCallLog(hb, ["IsDead"], [], callLabel + " IsDead?");
+          console.log("[OwnerPanel] " + callLabel + ": HP po naprawie = " + checkAfter + ", IsDead=" + isDead);
         }
 
         fixHealth("fix#0 (natychmiast)");
@@ -680,6 +714,12 @@
       html +=
         classified.nodes.length > 0
           ? objectButtonsHtml(classified.nodes, sceneName)
+          : "<i>Brak w tej scenie</i>";
+
+      html += "<hr/><h4>Pozostale stworzenia / obiekty (bez behaviora Health)</h4>";
+      html +=
+        classified.other.length > 0
+          ? objectButtonsHtml(classified.other, sceneName)
           : "<i>Brak w tej scenie</i>";
 
       panel.innerHTML = html;
